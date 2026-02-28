@@ -1219,6 +1219,102 @@ if df is not None:
                 st.latex(r"F1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}")
                 st.latex(r"\text{AUC-ROC} = \int_0^1 \text{TPR}(t)\, d(\text{FPR}(t))")
 
+                st.divider()
+
+                # Optimization Trend Chart
+                if 'optimization_log' in secom_results:
+                    st.info("6️⃣ **Multi-Round Optimization Journey**", icon="ℹ️")
+                    st.markdown("""
+                    > The following chart shows how **Recall** improved across iterative optimization rounds — 
+                    > from a naive baseline to the final model achieving **≥95% Recall**.
+                    """)
+
+                    opt_log = secom_results['optimization_log']
+
+                    # Trend line chart: Recall, F1, AUC across rounds
+                    fig_trend, ax_trend = plt.subplots(figsize=(12, 6))
+                    x_labels = opt_log['round_name'].tolist()
+                    x_pos = np.arange(len(x_labels))
+
+                    ax_trend.plot(x_pos, opt_log['recall'].values, 'o-', color='#e74c3c',
+                                  linewidth=2.5, markersize=8, label='Recall', zorder=5)
+                    ax_trend.plot(x_pos, opt_log['f1'].values, 's--', color='#3498db',
+                                  linewidth=1.5, markersize=6, label='F1-Score', alpha=0.8)
+                    ax_trend.plot(x_pos, opt_log['auc'].values, '^--', color='#2ecc71',
+                                  linewidth=1.5, markersize=6, label='AUC-ROC', alpha=0.8)
+
+                    # 95% target line
+                    ax_trend.axhline(y=0.95, color='red', linestyle=':', linewidth=1.5,
+                                     alpha=0.7, label='95% Recall Target')
+
+                    # Annotate recall values
+                    for i, (x, r) in enumerate(zip(x_pos, opt_log['recall'].values)):
+                        ax_trend.annotate(f'{r:.3f}', (x, r), textcoords="offset points",
+                                          xytext=(0, 12), ha='center', fontsize=9, fontweight='bold',
+                                          color='#e74c3c')
+
+                    ax_trend.set_xticks(x_pos)
+                    ax_trend.set_xticklabels(x_labels, rotation=35, ha='right', fontsize=9)
+                    ax_trend.set_ylabel('Score', fontsize=12)
+                    ax_trend.set_title('XGBoost Optimization Journey: Recall Improvement Across Rounds', fontsize=13)
+                    ax_trend.legend(loc='lower right', fontsize=10)
+                    ax_trend.set_ylim(0, 1.12)
+                    ax_trend.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                    st.pyplot(fig_trend)
+
+                    st.divider()
+
+                    # Optimization log table
+                    st.write("**Detailed Optimization Log**")
+                    display_log = opt_log[['round_name', 'description', 'recall', 'f1', 'auc',
+                                           'precision', 'threshold']].copy()
+                    display_log.columns = ['Round', 'Strategy', 'Recall', 'F1', 'AUC', 'Precision', 'Threshold']
+                    st.dataframe(display_log.round(4), use_container_width=True, hide_index=True)
+
+                    if 'winning_round' in secom_results:
+                        st.success(f"🏆 **Final Winner: {secom_results['winning_round']}** — "
+                                   f"Recall={secom_results['xgb_recall']:.3f}, "
+                                   f"F1={secom_results['xgb_f1']:.3f}, "
+                                   f"AUC={secom_results['xgb_auc']:.3f}, "
+                                   f"Features={secom_results.get('final_feature_count', 'N/A')}")
+
+                    # Generalization Diagnostics
+                    if 'bootstrap_ci' in secom_results:
+                        st.divider()
+                        st.info("7️⃣ **Generalization Diagnostics** *(Bias-Variance & Honest Evaluation)*", icon="ℹ️")
+
+                        boot = secom_results['bootstrap_ci']
+                        cv_info = secom_results.get('cv_threshold_info', {})
+
+                        col_boot1, col_boot2 = st.columns(2)
+                        with col_boot1:
+                            st.metric("Recall (Bootstrap Mean)", f"{boot['recall_mean']:.3f}",
+                                      help="Mean recall across 1000 bootstrap resamples of the test set")
+                            st.caption(f"95% CI: [{boot['recall_ci'][0]:.3f}, {boot['recall_ci'][1]:.3f}]")
+                        with col_boot2:
+                            st.metric("F1 (Bootstrap Mean)", f"{boot['f1_mean']:.3f}",
+                                      help="Mean F1 across 1000 bootstrap resamples of the test set")
+                            st.caption(f"95% CI: [{boot['f1_ci'][0]:.3f}, {boot['f1_ci'][1]:.3f}]")
+
+                        st.markdown("""
+                        **Why these diagnostics matter:**
+                        - **Threshold** was selected via **5-fold CV on training data** — NOT tuned on test set (no data leakage)
+                        - **Bootstrap CI** quantifies uncertainty due to the small test set (only 21 Fail samples)
+                        - The CI lower bound shows the **worst-case recall** we can expect on unseen data
+                        """)
+
+                        if cv_info:
+                            with st.expander("📋 CV Threshold Details (per model config)"):
+                                for cname, cinfo in cv_info.items():
+                                    st.write(f"**{cname}**")
+                                    st.write(f"- CV median threshold: `{cinfo['cv_threshold']:.3f}`")
+                                    st.write(f"- CV mean recall: `{cinfo['cv_mean_recall']:.3f}`")
+                                    fold_str = ", ".join([f"{r:.3f}" for r in cinfo['fold_recalls']])
+                                    st.write(f"- Fold recalls: [{fold_str}]")
+                                    thr_str = ", ".join([f"{t:.3f}" for t in cinfo['fold_thresholds']])
+                                    st.write(f"- Fold thresholds: [{thr_str}]")
+
             # ---------- (4) Tab 31: Feature Importance & Null Importance ---------- #
             with tab31:
                 st.caption("*XGBoost Feature Importance via SHAP & Null Importance Assessment*")
