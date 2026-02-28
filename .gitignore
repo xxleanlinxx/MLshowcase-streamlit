@@ -1,0 +1,26 @@
+# Raw SECOM data (large files, not needed for app — pre-processed artifacts are used instead)
+assets/secom/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Report
+SECOM_Report_EN.md
+SECOM_Report_ZH.md

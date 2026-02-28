@@ -9,4 +9,6 @@ statsmodels
 scipy
 scikit-learn
 lightgbm
+xgboost
+imbalanced-learn
 streamlit_option_menu

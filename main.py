@@ -13,7 +13,8 @@ from scipy.stats import f_oneway
 import statsmodels.api as sm
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.model_selection import GridSearchCV
-from sklearn.metrics import r2_score, classification_report, f1_score, mean_absolute_error
+from sklearn.metrics import (r2_score, classification_report, f1_score,
+                             mean_absolute_error, recall_score, roc_auc_score)
 from sklearn.inspection import PartialDependenceDisplay
 from sklearn.ensemble import RandomForestClassifier
 from lightgbm import LGBMRegressor
@@ -33,12 +34,13 @@ sns.set_theme(style = "whitegrid")
 #------------------------------------------------------------------------------------------------------#
 
 # Predefined dataset selection
-dataset_options = ['mpg', 'titanic']
+dataset_options = ['mpg', 'titanic', 'secom']
 
 # Dataset summaries
 dataset_summaries = {
     'mpg': "Dataset about fuel efficiency of cars, with attributes such as miles per gallon (MPG), number of cylinders, horsepower, weight, model year, and origin. Often used for regression and exploratory data analysis.",
-    'titanic': "Famous dataset on Titanic passengers, including attributes such as age, sex, class, survival status, and ticket price. Widely used for machine learning classification tasks and survival analysis."
+    'titanic': "Famous dataset on Titanic passengers, including attributes such as age, sex, class, survival status, and ticket price. Widely used for machine learning classification tasks and survival analysis.",
+    'secom': "SECOM dataset from a semi-conductor manufacturing process. Contains 1567 samples with 590 sensor/process measurements. The task is binary classification (Pass/Fail) for in-house line testing yield, with a ~14:1 class imbalance (104 fails out of 1567). Classic use case for feature engineering, handling class imbalance, and ensemble learning."
 }
 
 # Dataset column descriptions
@@ -69,6 +71,11 @@ dataset_columns = {
         'embark_town': "Town where the passenger embarked.",
         'alive': "Survival status as a string (yes or no).",
         'alone': "Whether the passenger was alone (True or False)."
+    },
+    'secom': {
+        'Sensor_0 ~ Sensor_N': "590 sensor/process measurement readings from the semiconductor manufacturing line. After feature engineering (removing high-missing, zero-variance, and highly correlated features), ~272 features remain.",
+        'label': "Binary classification target (0: Pass, 1: Fail). -1 in raw data maps to Pass, 1 maps to Fail.",
+        'status': "Pass/Fail status as a categorical string for EDA visualization."
     }
 }
 
@@ -85,8 +92,14 @@ with st.sidebar:
 
 # Load the selected dataset or uploaded file
 if selected_dataset != '-- null --':
-    df = sns.load_dataset(selected_dataset)
-    st.success(f"✅ Have Loaded <`{selected_dataset}`> dataset from Seaborn!")
+    if selected_dataset == 'secom':
+        with open("assets/secom_eda_data.pkl", "rb") as f:
+            secom_eda_data = pickle.load(f)
+        df = secom_eda_data['df']
+        st.success(f"✅ Have Loaded <`{selected_dataset}`> dataset (pre-processed from raw SECOM data)!")
+    else:
+        df = sns.load_dataset(selected_dataset)
+        st.success(f"✅ Have Loaded <`{selected_dataset}`> dataset from Seaborn!")
 else:
     df = None
 #------------------------------------------------------------------------------------------------------#
@@ -470,9 +483,10 @@ if df is not None:
             
             if numeric_columns:
                 # Put Numeric Var into Multi-Select
+                default_cols = numeric_columns if len(numeric_columns) <= 15 else numeric_columns[:10]
                 selected_columns = st.multiselect("Select `Numeric` columns:",
                                                   numeric_columns,
-                                                  default = numeric_columns,  # default settings for select all numeric
+                                                  default = default_cols,
                                                   )
                 st.divider()
                 
@@ -553,24 +567,46 @@ if df is not None:
                     if selected_category_column not in df.columns:
                         st.error(f"Column {selected_category_column} not found in dataframe.")
                     else:
-                        # Generate pairplot
-                        pairplot_fig = sns.pairplot(df,
-                                                    hue = selected_category_column,
-                                                    vars = numeric_columns,
-                                                    corner = True,
-                                                    plot_kws = {'alpha': 0.7},
-                        )
+                        # For high-dimensional datasets, let user pick columns
+                        if len(numeric_columns) > 10:
+                            st.warning("⚠️ Too many numeric columns for pair plot. Please select up to 10 columns.", icon = "⚠️")
+                            plot_columns = st.multiselect(
+                                "Select numeric columns for pair plot (max 10):",
+                                numeric_columns,
+                                default = numeric_columns[:5],
+                                key = 'pairplot_columns_selector'
+                            )
+                            if len(plot_columns) > 10:
+                                st.error("Please select at most 10 columns.")
+                                plot_columns = plot_columns[:10]
+                        else:
+                            plot_columns = numeric_columns
                         
-                        # Display the plot using Streamlit
-                        st.pyplot(pairplot_fig)
+                        if plot_columns:
+                            # Generate pairplot
+                            pairplot_fig = sns.pairplot(df,
+                                                        hue = selected_category_column,
+                                                        vars = plot_columns,
+                                                        corner = True,
+                                                        plot_kws = {'alpha': 0.7},
+                            )
+                            
+                            # Display the plot using Streamlit
+                            st.pyplot(pairplot_fig)
             else:
                 st.write("Ensure your dataset contains both numeric and categorical columns.", icon = "❗")
     #------------------------------------------------------------------------------------------------------#
     if selected == "ML & XAI":
-        tab30, tab31, tab32, tab33 = st.tabs(['⌈⁰ Model Summary ⌉',
-                                              '⌈¹ Feature Importance ⌉',
-                                              '⌈² Interaction Effect ⌉',
-                                              '⌈³ Prediction on Sample ⌉'])
+        if selected_dataset == "secom":
+            tab30, tab31, tab32, tab33 = st.tabs(['⌈⁰ Model Comparison ⌉',
+                                                  '⌈¹ Feature Importance & Null Importance ⌉',
+                                                  '⌈² Feature Engineering Pipeline ⌉',
+                                                  '⌈³ SHAP Prediction on Sample ⌉'])
+        else:
+            tab30, tab31, tab32, tab33 = st.tabs(['⌈⁰ Model Summary ⌉',
+                                                  '⌈¹ Feature Importance ⌉',
+                                                  '⌈² Interaction Effect ⌉',
+                                                  '⌈³ Prediction on Sample ⌉'])
         
         # ------------------------------------------- #
         # MPG (Regression)
@@ -1052,6 +1088,432 @@ if df is not None:
                         show=False
                     )
                     st.pyplot(fig_waterfall)
+        
+        # ------------------------------------------- #
+        # SECOM (Classification - XGBoost + LR Baseline)
+        # ------------------------------------------- #
+        elif selected_dataset == "secom":
+            # ---------- (1) Import models & parameters ------------- #
+            with open("assets/secom_model_results.pkl", "rb") as f:
+                secom_results = pickle.load(f)
+
+            with open("assets/secom_xgb_model.pkl", "rb") as f:
+                best_model = pickle.load(f)
+
+            with open("assets/secom_explainer.pkl", "rb") as f:
+                explainer = pickle.load(f)
+
+            shap_values = np.load("assets/secom_shap_values.npy", allow_pickle=True)
+
+            with open("assets/secom_best_params.pkl", "rb") as f:
+                best_params = pickle.load(f)
+
+            # ---------- (2) Unpack results ---------- #
+            X_test = secom_results['X_test']
+            y_test = secom_results['y_test']
+            feature_names = secom_results['feature_names']
+
+            # ---------- (3) Tab 30: Model Comparison ---------- #
+            with tab30:
+                st.caption("*Classification Showcase: Logistic Regression (Baseline) vs XGBoost with SMOTE & Threshold Tuning*")
+                st.write("### *Logistic Regression vs XGBoost Classifier*")
+                st.warning(" 🎖️ Prediction on semiconductor manufacturing yield: `Pass` vs `Fail` (Binary Classification) ")
+
+                st.divider()
+
+                # Model Comparison Table
+                st.info("1️⃣ **Model Performance Comparison** (Focus: Recall, F1, AUC-ROC)", icon="ℹ️")
+                comparison_df = pd.DataFrame({
+                    'Metric': ['Recall (Fail class)', 'F1-Score (Fail class)', 'AUC-ROC', 'Optimal Threshold'],
+                    'Logistic Regression': [
+                        f"{secom_results['lr_recall']:.3f}",
+                        f"{secom_results['lr_f1']:.3f}",
+                        f"{secom_results['lr_auc']:.3f}",
+                        f"{secom_results['lr_optimal_threshold']:.3f}"
+                    ],
+                    'XGBoost': [
+                        f"{secom_results['xgb_recall']:.3f}",
+                        f"{secom_results['xgb_f1']:.3f}",
+                        f"{secom_results['xgb_auc']:.3f}",
+                        f"{secom_results['xgb_optimal_threshold']:.3f}"
+                    ]
+                }).set_index('Metric')
+                st.dataframe(comparison_df, use_container_width=True)
+
+                st.markdown("""
+                > **Why not Accuracy?** With a ~14:1 class imbalance, a model predicting all samples as *Pass* 
+                > would achieve ~93% accuracy but **0% Recall** on failures. In manufacturing, missing a defect 
+                > (False Negative) is far more costly than a false alarm, so **Recall** is the primary metric.
+                """)
+
+                st.divider()
+
+                # Classification Reports side by side
+                st.info("2️⃣ **Detailed Classification Reports**", icon="ℹ️")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Logistic Regression (Baseline)**")
+                    lr_report_df = pd.DataFrame(secom_results['lr_report']).transpose()
+                    st.dataframe(lr_report_df.round(3))
+                with col2:
+                    st.write("**XGBoost**")
+                    xgb_report_df = pd.DataFrame(secom_results['xgb_report']).transpose()
+                    st.dataframe(xgb_report_df.round(3))
+
+                st.divider()
+
+                # Confusion Matrices
+                st.info("3️⃣ **Confusion Matrices**", icon="ℹ️")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Logistic Regression**")
+                    fig_cm_lr, ax_cm_lr = plt.subplots(figsize=(6, 4))
+                    sns.heatmap(secom_results['lr_cm'], annot=True, fmt='d', cmap='Blues',
+                                xticklabels=['Pass', 'Fail'], yticklabels=['Pass', 'Fail'], ax=ax_cm_lr)
+                    ax_cm_lr.set_xlabel('Predicted')
+                    ax_cm_lr.set_ylabel('Actual')
+                    st.pyplot(fig_cm_lr)
+                with col2:
+                    st.write("**XGBoost**")
+                    fig_cm_xgb, ax_cm_xgb = plt.subplots(figsize=(6, 4))
+                    sns.heatmap(secom_results['xgb_cm'], annot=True, fmt='d', cmap='Greens',
+                                xticklabels=['Pass', 'Fail'], yticklabels=['Pass', 'Fail'], ax=ax_cm_xgb)
+                    ax_cm_xgb.set_xlabel('Predicted')
+                    ax_cm_xgb.set_ylabel('Actual')
+                    st.pyplot(fig_cm_xgb)
+
+                st.divider()
+
+                # ROC Curves
+                st.info("4️⃣ **ROC Curves Comparison**", icon="ℹ️")
+                fig_roc, ax_roc = plt.subplots(figsize=(10, 6))
+                ax_roc.plot(secom_results['lr_fpr'], secom_results['lr_tpr'],
+                            label=f"Logistic Regression (AUC={secom_results['lr_auc']:.3f})", linestyle='--', color='steelblue')
+                ax_roc.plot(secom_results['xgb_fpr'], secom_results['xgb_tpr'],
+                            label=f"XGBoost (AUC={secom_results['xgb_auc']:.3f})", color='forestgreen', linewidth=2)
+                ax_roc.plot([0, 1], [0, 1], 'k--', alpha=0.5, label='Random Classifier')
+                ax_roc.set_xlabel('False Positive Rate')
+                ax_roc.set_ylabel('True Positive Rate')
+                ax_roc.set_title('ROC Curve: LR vs XGBoost')
+                ax_roc.legend(loc='lower right')
+                ax_roc.grid(True, alpha=0.3)
+                st.pyplot(fig_roc)
+
+                st.divider()
+
+                st.info("5️⃣ **Best XGBoost Parameters** *(GridSearchCV, scoring=recall)*", icon="ℹ️")
+                st.write(best_params)
+                st.markdown("""
+                - *n_estimators*: Number of boosting rounds.
+                - *max_depth*: Maximum tree depth — controls overfitting.
+                - *learning_rate*: Step size shrinkage — smaller values require more boosting rounds.
+                - *scale_pos_weight*: Balances the positive and negative class weights.
+                """)
+
+                st.divider()
+
+                st.markdown("""
+                ##### Key Formulas
+                """)
+                st.latex(r"\text{Recall} = \frac{\text{True Positives}}{\text{True Positives} + \text{False Negatives}}")
+                st.latex(r"F1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}")
+                st.latex(r"\text{AUC-ROC} = \int_0^1 \text{TPR}(t)\, d(\text{FPR}(t))")
+
+            # ---------- (4) Tab 31: Feature Importance & Null Importance ---------- #
+            with tab31:
+                st.caption("*XGBoost Feature Importance via SHAP & Null Importance Assessment*")
+
+                st.write("### *SHAP-based Feature Importance (Top 20)*")
+                st.info("""
+                    ℹ️ Feature importance indicates *how much each feature contributes to the model's predictions* 
+                    > Higher importance means the feature has a stronger influence on the outcome
+                """)
+
+                shap_feat_imp = secom_results['shap_feature_importance']
+                top_n = 20
+                top_features = shap_feat_imp.head(top_n)
+
+                colors = plt.cm.Greens(np.linspace(0.9, 0.2, len(top_features)))
+                fig_bar, ax_bar = plt.subplots(figsize=(10, 8))
+                ax_bar.barh(
+                    top_features.index[::-1],
+                    top_features.values[::-1],
+                    color=colors[::-1],
+                    edgecolor='black'
+                )
+                ax_bar.set_xlabel("Mean |SHAP Value|", fontsize=12)
+                ax_bar.set_ylabel("Feature", fontsize=12)
+                ax_bar.set_title(f"Top {top_n} Features by SHAP Importance")
+                st.pyplot(fig_bar)
+
+                st.divider()
+
+                st.write("### *SHAP Summary Plot*")
+                st.info("ℹ️ This plot shows how the magnitude of a feature value influences the prediction")
+                st.success("""
+                SHAP (**SH**apley **A**dditive ex**P**lanations) is a model explanation method based on *game theory*
+                > It calculates the contribution of each feature to individual predictions and measures feature importance by averaging these contribution values.
+                """)
+
+                fig_summary, ax_summary = plt.subplots(figsize=(10, 8))
+                shap.summary_plot(shap_values, X_test, max_display=20, show=False)
+                st.pyplot(fig_summary)
+
+                st.divider()
+
+                st.markdown("""
+                #### Key Components of the SHAP Summary Plot
+                
+                ##### 1. **X-Axis (SHAP Values)**:
+                - **Positive SHAP values**: Feature pushes prediction towards *Fail*.
+                - **Negative SHAP values**: Feature pushes prediction towards *Pass*.
+                
+                ##### 2. **Y-Axis (Feature Names)**:
+                - Features ranked by importance. *Most impactful at top.*
+                
+                ##### 3. **Color (Feature Values)**:
+                - **Blue**: Low feature values. **Red**: High feature values.
+                """)
+
+                st.divider()
+
+                # Null Importance Assessment
+                st.write("### *Null Importance Assessment*")
+                st.info("""
+                    ℹ️ Null Importance tests whether a feature's importance is **statistically significant** 
+                    by comparing it against importance scores from models trained on **shuffled (random) labels**.
+                    > Features whose actual importance exceeds the 95th percentile of null importances are deemed *truly significant*.
+                """)
+
+                null_result = secom_results['null_importance_result']
+                n_significant = int(null_result['is_significant'].sum())
+                n_total = len(null_result)
+
+                st.write(f"**Significant features**: {n_significant} / {n_total}")
+
+                # Plot top 20 features: actual vs null 95th percentile
+                top_null = null_result.head(top_n).copy()
+                fig_null, ax_null = plt.subplots(figsize=(10, 8))
+                x_pos = np.arange(len(top_null))
+                width = 0.35
+                ax_null.barh(x_pos + width/2, top_null['actual_importance'].values, width,
+                             label='Actual Importance', color='forestgreen', edgecolor='black')
+                ax_null.barh(x_pos - width/2, top_null['null_95th_percentile'].values, width,
+                             label='Null 95th Percentile', color='lightcoral', edgecolor='black', alpha=0.7)
+                ax_null.set_yticks(x_pos)
+                ax_null.set_yticklabels(top_null['feature'].values)
+                ax_null.invert_yaxis()
+                ax_null.set_xlabel('Importance Score')
+                ax_null.set_title(f'Top {top_n} Features: Actual vs Null Importance')
+                ax_null.legend(loc='lower right')
+                ax_null.grid(True, alpha=0.3, axis='x')
+                st.pyplot(fig_null)
+
+                st.divider()
+
+                # Show full null importance table
+                st.write("**Full Null Importance Result Table** (sorted by actual importance)")
+                st.dataframe(null_result.round(5), use_container_width=True, height=400)
+
+            # ---------- (5) Tab 32: Feature Engineering Pipeline ---------- #
+            with tab32:
+                st.caption("*Feature Engineering Pipeline & Data Preprocessing Summary*")
+                st.write("### *SECOM Feature Engineering Pipeline*")
+
+                proc_info = secom_eda_data['processing_info']
+
+                # Pipeline steps
+                st.info("1️⃣ **Data Cleaning Summary**", icon="ℹ️")
+                pipeline_df = pd.DataFrame({
+                    'Step': [
+                        'Original Features',
+                        'After removing >50% missing',
+                        'After removing zero-variance',
+                        'After removing corr > 0.95',
+                        'Final Features for Modeling'
+                    ],
+                    'Features': [
+                        proc_info['original_shape'][1],
+                        proc_info['original_shape'][1] - proc_info['n_high_missing_dropped'],
+                        proc_info['original_shape'][1] - proc_info['n_high_missing_dropped'] - proc_info['n_zero_var_dropped'],
+                        proc_info['cleaned_shape'][1],
+                        proc_info['cleaned_shape'][1]
+                    ],
+                    'Dropped': [
+                        '-',
+                        f"{proc_info['n_high_missing_dropped']}",
+                        f"{proc_info['n_zero_var_dropped']}",
+                        f"{proc_info['n_high_corr_dropped']}",
+                        '-'
+                    ]
+                })
+                st.dataframe(pipeline_df, use_container_width=True, hide_index=True)
+
+                st.markdown("""
+                **Feature Engineering Steps:**
+                1. **Drop High Missing (>50%)**: Sensors with excessive missing readings provide unreliable information.
+                2. **Drop Zero Variance**: Constant-value sensors carry no discriminative power.
+                3. **Median Imputation**: Remaining missing values filled with feature median (robust to outliers).
+                4. **Remove High Correlation (>0.95)**: Redundant sensors removed to reduce multicollinearity.
+                """)
+
+                st.divider()
+
+                # Class Imbalance & SMOTE
+                st.info("2️⃣ **Class Imbalance & SMOTE**", icon="ℹ️")
+                st.write(f"**Original class ratio**: {proc_info['imbalance_ratio']} (Pass : Fail)")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Before SMOTE (Train Set)**")
+                    before_smote = secom_results['train_before_smote']
+                    fig_before, ax_before = plt.subplots(figsize=(6, 4))
+                    bars = ax_before.bar(['Pass', 'Fail'],
+                                         [before_smote['Pass'], before_smote['Fail']],
+                                         color=['steelblue', 'coral'], edgecolor='black')
+                    for bar in bars:
+                        ax_before.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 5,
+                                       f'{int(bar.get_height())}', ha='center', fontweight='bold')
+                    ax_before.set_ylabel('Count')
+                    ax_before.set_title('Before SMOTE')
+                    st.pyplot(fig_before)
+
+                with col2:
+                    st.write("**After SMOTE (Train Set)**")
+                    after_smote = secom_results['train_after_smote']
+                    fig_after, ax_after = plt.subplots(figsize=(6, 4))
+                    bars = ax_after.bar(['Pass', 'Fail'],
+                                        [after_smote['Pass'], after_smote['Fail']],
+                                        color=['steelblue', 'coral'], edgecolor='black')
+                    for bar in bars:
+                        ax_after.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 5,
+                                      f'{int(bar.get_height())}', ha='center', fontweight='bold')
+                    ax_after.set_ylabel('Count')
+                    ax_after.set_title('After SMOTE')
+                    st.pyplot(fig_after)
+
+                st.markdown("""
+                **SMOTE (Synthetic Minority Over-sampling Technique)**:
+                > Generates synthetic samples for the minority class (Fail) by interpolating between existing 
+                > minority samples and their nearest neighbors. Applied **only to the training set** to avoid data leakage.
+                """)
+
+                st.divider()
+
+                # PCA Visualization
+                st.info("3️⃣ **PCA Visualization**", icon="ℹ️")
+
+                pca_2d_df = secom_eda_data['pca_2d_df']
+                pca_ev = secom_eda_data['pca_explained_variance']
+                pca_cv = secom_eda_data['pca_cumulative_variance']
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**PCA 2D Scatter (Pass vs Fail)**")
+                    fig_pca, ax_pca = plt.subplots(figsize=(8, 6))
+                    for label, color, marker in [(0, 'steelblue', 'o'), (1, 'coral', 'x')]:
+                        mask = pca_2d_df['label'] == label
+                        name = 'Pass' if label == 0 else 'Fail'
+                        ax_pca.scatter(pca_2d_df.loc[mask, 'PC1'], pca_2d_df.loc[mask, 'PC2'],
+                                       c=color, label=name, alpha=0.6, s=30, marker=marker)
+                    ax_pca.set_xlabel('PC1')
+                    ax_pca.set_ylabel('PC2')
+                    ax_pca.legend()
+                    ax_pca.set_title('PCA 2D Projection')
+                    ax_pca.grid(True, alpha=0.3)
+                    st.pyplot(fig_pca)
+
+                with col2:
+                    st.write("**Cumulative Explained Variance**")
+                    fig_ev, ax_ev = plt.subplots(figsize=(8, 6))
+                    ax_ev.plot(range(1, len(pca_cv)+1), pca_cv, 'o-', color='forestgreen', markersize=4)
+                    ax_ev.axhline(y=0.90, color='r', linestyle='--', alpha=0.7, label='90% threshold')
+                    ax_ev.set_xlabel('Number of Components')
+                    ax_ev.set_ylabel('Cumulative Explained Variance')
+                    ax_ev.set_title('PCA Explained Variance')
+                    ax_ev.legend()
+                    ax_ev.grid(True, alpha=0.3)
+                    st.pyplot(fig_ev)
+
+                st.markdown("""
+                **PCA (Principal Component Analysis)**:
+                > Reduces the high-dimensional sensor data to a few principal components for visualization.
+                > Note: PCA is used here for **EDA visualization only** — the model uses original (cleaned) features 
+                > so that SHAP explanations remain interpretable at the individual sensor level.
+                """)
+
+                st.divider()
+
+                # Missing Value Distribution (from original data)
+                st.info("4️⃣ **Original Missing Value Distribution**", icon="ℹ️")
+                missing_summary = secom_eda_data['missing_summary']
+                missing_nonzero = missing_summary[missing_summary['missing_pct'] > 0].copy()
+
+                fig_miss, ax_miss = plt.subplots(figsize=(12, 5))
+                ax_miss.hist(missing_nonzero['missing_pct'] * 100, bins=30, color='steelblue',
+                             edgecolor='black', alpha=0.8)
+                ax_miss.axvline(x=50, color='red', linestyle='--', linewidth=2, label='50% threshold (drop)')
+                ax_miss.set_xlabel('Missing Percentage (%)')
+                ax_miss.set_ylabel('Number of Features')
+                ax_miss.set_title('Distribution of Missing Value Percentages (Original 590 Features)')
+                ax_miss.legend()
+                ax_miss.grid(True, alpha=0.3)
+                st.pyplot(fig_miss)
+
+                st.write(f"Features with any missing values: **{len(missing_nonzero)}** / {proc_info['original_shape'][1]}")
+
+            # ---------- (6) Tab 33: SHAP Prediction on Sample ---------- #
+            with tab33:
+                st.caption("*XGBoost Classification with SHAP Explanations for Individual Samples*")
+                st.write("### *SHAP Waterfall Plot*")
+                st.info("ℹ️ Waterfall plot illustrates how specific sensor readings contribute to the final prediction for a single test sample.")
+
+                row_index = st.number_input("Select a Row Index of a Test Sample ⤵️",
+                                            min_value=0,
+                                            max_value=len(X_test) - 1,
+                                            step=1)
+
+                if row_index is not None:
+                    # Show sample prediction info
+                    actual_label = int(y_test.iloc[row_index])
+                    pred_prob = secom_results['xgb_y_prob'][row_index]
+                    pred_label = int(secom_results['xgb_y_pred'][row_index])
+
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Actual", "Pass ✅" if actual_label == 0 else "Fail ❌")
+                    col2.metric("Predicted", "Pass ✅" if pred_label == 0 else "Fail ❌")
+                    col3.metric("Fail Probability", f"{pred_prob:.3f}")
+
+                    st.divider()
+
+                    fig_waterfall, ax_waterfall = plt.subplots()
+                    shap.waterfall_plot(
+                        shap.Explanation(
+                            base_values=explainer.expected_value,
+                            values=shap_values[row_index],
+                            data=X_test.iloc[row_index],
+                            feature_names=X_test.columns.tolist()
+                        ),
+                        max_display=15,
+                        show=False
+                    )
+                    st.pyplot(fig_waterfall)
+
+                    st.divider()
+
+                    st.write("### *SHAP Force Plot*")
+                    st.info("ℹ️ Force plot shows the same information in a horizontal layout — features pushing towards Fail (red) vs Pass (blue).")
+
+                    fig_force = shap.force_plot(
+                        explainer.expected_value,
+                        shap_values[row_index],
+                        X_test.iloc[row_index],
+                        feature_names=X_test.columns.tolist(),
+                        matplotlib=True,
+                        show=False
+                    )
+                    st.pyplot(fig_force)
+
     #------------------------------------------------------------------------------------------------------#
 else:
     st.error('''

@@ -3,7 +3,7 @@
 ## 👁️‍🗨️ Overview
 
 - This [Demo application](https://ml-xai-showcase-toolkit.streamlit.app/) demonstrates the integration of **Machine Learning** techniques and **Explainable AI (XAI)** methods using Streamlit.
-- It utilizes Seaborn datasets (`mpg` and `titanic`) as examples for regression and classification tasks.
+- It utilizes Seaborn datasets (`mpg` and `titanic`) and the **SECOM** semiconductor manufacturing dataset as examples for regression and classification tasks.
 - Key functionalities include *dataset exploration*, *statistical analysis*, *model summary*, *feature importance visualization*, and *partial dependence plots*.
 
 ---
@@ -11,7 +11,7 @@
 ## 📎 Features
 
 - **Dataset Selection**
-  > - Choose between preloaded datasets (`mpg` and `titanic`) or upload your custom dataset.
+  > - Choose between preloaded datasets (`mpg`, `titanic`, and `secom`).
 - **Dataset Summary**
   > - View column descriptions, data types, and statistics.
 - **Exploratory Data Analysis (EDA)**:
@@ -22,10 +22,12 @@
 - **Machine Learning Models**
   > - Regression case with `LGBMRegressor` on the `mpg` dataset.
   > - Classification case with `RandomForestClassifier` on the `titanic` dataset.
+  > - **Classification case with `XGBoost` on the `secom` dataset** — featuring `Logistic Regression` as baseline, `SMOTE` for class imbalance, threshold tuning via Youden's J, and comprehensive feature engineering (high-missing removal, zero-variance removal, high-correlation filtering).
 - **Explainable AI**(XAI)
   > - SHAP summary plots for feature importance.
   > - 2-Dimensional Partial dependence plots(PDP) for interaction effects.
   > - SHAP waterfall plots for individual predictions.
+  > - **Null Importance Assessment** for validating feature significance (SECOM).
 
 ---
 
@@ -33,10 +35,21 @@
 
 ```plaintext
 ml-xai-demo/
-├── main.py                  # Main Streamlit app file
-├── assets/                 # Contains models, SHAP values, and other assets
-├── requirements.txt        # Python dependencies
-└── README.md               # Documentation
+├── main.py                          # Main Streamlit app file
+├── requirements.txt                 # Python dependencies
+├── .gitignore                       # Git ignore (excludes raw SECOM data)
+├── README.md                        # Documentation
+├── SECOM_Report_EN.md               # SECOM detailed report (English)
+├── SECOM_Report_ZH.md               # SECOM detailed report (中文)
+└── assets/
+    ├── train_mpg.py                 # MPG model training script
+    ├── train_titanic.py             # Titanic model training script
+    ├── train_secom.py               # SECOM model training script
+    ├── mpg_*.pkl / .npy             # Pre-computed MPG model artifacts
+    ├── titanic_*.pkl / .npy         # Pre-computed Titanic model artifacts
+    ├── secom_*.pkl / .npy           # Pre-computed SECOM model artifacts
+    ├── secom/                       # Raw SECOM data (gitignored)
+    └── *.png                        # App images & icons
 ```
 
 ---
@@ -46,11 +59,29 @@ ml-xai-demo/
 This application uses the following Python libraries:
 
 - **Basic**: `streamlit`, `pickle`, `pandas`, `numpy`, `matplotlib`, `seaborn`
-- **Machine Learning**: `scikit-learn`, `lightgbm`
+- **Machine Learning**: `scikit-learn`, `lightgbm`, `xgboost`, `imbalanced-learn`
 - **Explainable AI**: `shap`, `pdpbox`
 - **Statistics**: `statsmodels`, `scipy`
 
 Install all dependencies via `requirements.txt`.
+
+---
+
+## 🏭 SECOM Dataset
+
+The **SECOM** (Semiconductor Manufacturing) dataset is a classic industrial ML benchmark:
+
+| Property | Value |
+|---|---|
+| Samples | 1,567 |
+| Raw Features | 590 sensor/process measurements |
+| Features after cleaning | ~272 |
+| Target | Pass (-1) / Fail (1) binary classification |
+| Class Imbalance | ~14:1 (1,463 Pass vs 104 Fail) |
+
+**Pipeline:** Feature Engineering → SMOTE → StandardScaler → Logistic Regression (baseline) + XGBoost (main) → SHAP + Null Importance
+
+> See `SECOM_Report_EN.md` / `SECOM_Report_ZH.md` for detailed analysis.
 
 ---
 
